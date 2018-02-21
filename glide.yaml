@@ -1,0 +1,4 @@
+package: github.com/manGoweb/slack-rtm-http
+import:
+- package: github.com/nlopes/slack
+  version: ^v0.2.0
