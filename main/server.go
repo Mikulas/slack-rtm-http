@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"encoding/json"
 )
 
 const (
@@ -33,9 +34,9 @@ func MakeServer(port int, channel string, rtm *slack.RTM) *Server {
 	return srv
 }
 
-func (srv *Server) sendMessage(message string) error {
+func (srv *Server) sendMessage(payload Payload) error {
 	var err error
-	srv.respChan, srv.respTimestamp, err = srv.rtm.PostMessage(srv.channel, message, slack.PostMessageParameters{
+	srv.respChan, srv.respTimestamp, err = srv.rtm.PostMessage(srv.channel, payload.Message, slack.PostMessageParameters{
 		Username:   Username,
 		AsUser:     true,
 		EscapeText: false,
@@ -43,16 +44,54 @@ func (srv *Server) sendMessage(message string) error {
 	return err
 }
 
-func (srv *Server) updateMessage(message string) error {
-	_, _, _, err := srv.rtm.SendMessageContext(context.Background(), srv.respChan, slack.MsgOptionUpdate(srv.respTimestamp), slack.MsgOptionText(message, false))
+func (srv *Server) updateMessage(payload Payload) error {
+	options := make([]slack.MsgOption, 0)
+
+	parse := slack.MsgOptionPostMessageParameters(slack.PostMessageParameters{
+		LinkNames: 1,
+		UnfurlMedia: true,
+		UnfurlLinks: true,
+	})
+	options = append(options, parse)
+
+	update := slack.MsgOptionUpdate(srv.respTimestamp)
+	options = append(options, update)
+
+	text := slack.MsgOptionText(payload.Message, false)
+	options = append(options, text)
+
+	if payload.RollbackValue != "" {
+		btn := slack.MsgOptionAttachments(slack.Attachment{
+			CallbackID: "deploy",
+			Color:      "#FFFFFF",
+			Actions: []slack.AttachmentAction{{
+				Name:  "rollback",
+				Text:  "Rollback to this version",
+				Style: "default",
+				Type:  "button",
+				Value: payload.RollbackValue,
+				Confirm: &slack.ConfirmationField{
+					Title:       "Are you sure?",
+					Text:        "Migrations will NOT be rolled back!",
+					OkText:      "Yes, rollback",
+					DismissText: "Cancel",
+				},
+			}},
+		})
+		options = append(options, btn)
+	}
+
+	_, _, _, err := srv.rtm.SendMessageContext(context.Background(), srv.respChan, options...)
 	return err
 }
 
-func (srv *Server) message(message string) error {
+func (srv *Server) message(payload Payload) error {
 	if srv.respChan == "" {
-		return srv.sendMessage(message)
+		log.Println("sending new message")
+		return srv.sendMessage(payload)
 	} else {
-		return srv.updateMessage(message)
+		log.Println("updating message")
+		return srv.updateMessage(payload)
 	}
 }
 
@@ -65,7 +104,21 @@ func (srv *Server) handler(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 	body, _ := ioutil.ReadAll(r.Body)
-	srv.message(string(body))
+
+	payload := Payload{}
+	err := json.Unmarshal(body, &payload)
+	if err != nil {
+		w.WriteHeader(500)
+		log.Println(err.Error())
+		return
+	}
+
+	err = srv.message(payload)
+	if err != nil {
+		w.WriteHeader(500)
+		log.Println(err.Error())
+		return
+	}
 
 	fmt.Fprintln(w, string(body))
 }

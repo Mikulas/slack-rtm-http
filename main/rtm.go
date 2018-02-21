@@ -6,13 +6,9 @@ import (
 	"os"
 )
 
-const (
-	SlackToken = "xoxb-294382616742-StFn3kQijJMrk5Al6y5fPY5Q"
-)
+func MakeSlackRtm(authToken string) *slack.RTM {
 
-func MakeSlackRtm() *slack.RTM {
-
-	api := slack.New(SlackToken)
+	api := slack.New(authToken)
 	logger := log.New(os.Stdout, "slack: ", log.Lshortfile|log.LstdFlags)
 	slack.SetLogger(logger)
 	api.SetDebug(false)
